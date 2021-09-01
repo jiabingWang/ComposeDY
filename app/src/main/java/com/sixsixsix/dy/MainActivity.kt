@@ -1,6 +1,8 @@
 package com.sixsixsix.dy
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
@@ -23,10 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.constraintlayout.compose.ConstraintLayout
 import androidx.core.content.ContextCompat.startActivity
-import com.sixsixsix.dy.help.ParseHtmlCallback
-import com.sixsixsix.dy.help.WebViewInterface
-import com.sixsixsix.dy.help.getRealUrl
-import com.sixsixsix.dy.help.getUrl
+import com.sixsixsix.dy.help.*
 import com.sixsixsix.dy.model.ResultBean
 import com.sixsixsix.dy.ui.theme.DYTheme
 import kotlinx.coroutines.CoroutineScope
@@ -34,11 +33,25 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.lang.Exception
+import androidx.core.app.ActivityCompat
+
 
 class MainActivity : ComponentActivity() {
+    /**
+     * 动态权限请求码
+     */
+    private val needPermissionCode = 1024
+
+    /**
+     * 动态权限的回调，是否有此权限
+     * 动态权限的回调，是否勾选了不再提示
+     */
+    private var needPermissionCall: ((granted: Boolean, checked: Boolean) -> Unit)? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        getPermission(mutableListOf(Manifest.permission.WRITE_EXTERNAL_STORAGE,Manifest.permission.READ_EXTERNAL_STORAGE)) { granted, checked ->
 
+        }
         setContent {
             DYTheme {
                 // A surface container using the 'background' color from the theme
@@ -46,6 +59,58 @@ class MainActivity : ComponentActivity() {
                     HomeScreen()
                 }
             }
+        }
+    }
+
+    /**
+     * 处理请求的权限结果
+     */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == needPermissionCode) {
+            var isGetAllPermission = true
+            var checked = false
+            for (i in grantResults.indices) {
+                if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
+                    isGetAllPermission = false
+                    if (!ActivityCompat.shouldShowRequestPermissionRationale(
+                            this,
+                            permissions[i]
+                        )
+                    ) {
+                        checked = true
+                    }
+                }
+            }
+            needPermissionCall?.invoke(isGetAllPermission, checked)
+        }
+    }
+
+    private fun getPermission(
+        permission: MutableList<String>,
+        needPermissionCall: (granted: Boolean, checked: Boolean) -> Unit
+    ) {
+        var isNeedRequest = false
+        val list = mutableListOf<String>()
+        permission.forEach {
+            if (ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED) {
+                isNeedRequest = true
+                list.add(it)
+            }
+        }
+        if (isNeedRequest) {
+            this.needPermissionCall = needPermissionCall
+            if (list.isNotEmpty()) {
+                ActivityCompat.requestPermissions(this, list.toTypedArray(), needPermissionCode)
+            } else {
+                needPermissionCall.invoke(true, false)
+            }
+        } else {
+            needPermissionCall.invoke(true, false)
         }
     }
 }
@@ -145,7 +210,6 @@ private fun initWebView(webView: WebView) {
     }
     webView.addJavascriptInterface(WebViewInterface(object : ParseHtmlCallback {
         override fun onResult(data: ResultBean) {
-            Log.d("jiaBing", "data--${data}")
             val intent = Intent(webView.context, ResultActivity::class.java)
             intent.putExtra("data", data)
             startActivity(webView.context, intent, null)
@@ -176,7 +240,12 @@ private fun initWebView(webView: WebView) {
 
         override fun onPageFinished(view: WebView, url: String) {
             if (TextUtils.equals(url, view.url)) {
-                webViewStartGetHtml(view)
+                Handler().postDelayed({
+                    view.loadUrl(
+                        "javascript:window.jsBridge.startGetContent('<head>'+" +
+                                "document.getElementsByTagName('html')[0].innerHTML+'</head>');"
+                    )
+                }, 1000)
             }
             super.onPageFinished(view, url)
         }
@@ -191,18 +260,6 @@ private fun initWebView(webView: WebView) {
     }
 }
 
-/**
- * 注入js代码
- */
-private fun webViewStartGetHtml(view: WebView) {
-    Handler().postDelayed({
-        view.loadUrl(
-            "javascript:window.jsBridge.startGetContent('<head>'+" +
-                    "document.getElementsByTagName('html')[0].innerHTML+'</head>');"
-        )
-        Log.d("jiaBing", "webViewStartGetHtml: ")
-    }, 1000)
-}
 
 /**
  * 解析视频地址
@@ -210,17 +267,18 @@ private fun webViewStartGetHtml(view: WebView) {
 private fun resolveLink(scope: CoroutineScope, linkUrl: String, webView: WebView?) {
     scope.launch {
         withContext(Dispatchers.Default) {
-            Log.d("jiaBing", "linkUrl---${linkUrl}")
             val url = getUrl(linkUrl)
             if (url == null) {
                 //解析失败
             } else {
                 //获得到了视频的真实地址
-                val realUrl = getRealUrl(url)
+                val realUrl = getRealVideoUrl(url)
                 if (realUrl != null && webView != null) {
                     withContext(Dispatchers.Main) {
                         webView.loadUrl(realUrl)
                     }
+                } else {
+                    Log.d("jiaBing", "获得视频的真实地址失败")
                 }
             }
         }

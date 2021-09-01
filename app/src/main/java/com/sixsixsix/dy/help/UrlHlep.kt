@@ -1,6 +1,5 @@
 package com.sixsixsix.dy.help
 
-import android.os.Handler
 import android.util.Log
 import android.webkit.JavascriptInterface
 import com.sixsixsix.dy.model.ItemResult
@@ -8,6 +7,7 @@ import com.sixsixsix.dy.model.ResultBean
 import com.sixsixsix.dy.model.Type
 import org.jsoup.Jsoup
 import java.io.IOException
+import java.lang.Exception
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.regex.Pattern
@@ -37,7 +37,7 @@ fun getUrl(linkUrl: String): String? {
 /**
  * 截取到的需要再重定向获取真实地址
  */
-fun getRealUrl(url: String): String? {
+fun getRealVideoUrl(url: String): String? {
     var realUrl: String? = null
     try {
         val conn = URL(url).openConnection() as HttpURLConnection
@@ -52,12 +52,26 @@ fun getRealUrl(url: String): String? {
             realUrl = conn.getHeaderField("Location")
         }
         Log.d("jiaBing", "realUrl---${realUrl}")
-
         conn.disconnect()
     } catch (e: IOException) {
         e.printStackTrace()
     }
     return realUrl
+}
+
+fun getRealImgUrl(url: String): String? {
+    //将第一个~开始至.image前面替换成noop
+    var result: String? = null
+    try {
+        val startIndex = url.indexOf("~")
+        val endIndex = url.indexOf(".image")
+        val water = url.substring(startIndex + 1, endIndex)
+        val noWater = "noop"
+        result = url.replace(water, noWater)
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+    return result
 }
 
 /**
@@ -74,42 +88,42 @@ class WebViewInterface(private val parseHtmlCallback: ParseHtmlCallback) {
         val resultList = mutableListOf<ItemResult>()
         val document = Jsoup.parse(html)
         if (document == null) {
-            //解析失败
+            //
             parseHtmlCallback.onResult(ResultBean(list = resultList))
             return
         }
-        // 查找图片标签
-        Log.d("jiaBing", "document: ${document}")
+        //
         val imgTag = document.getElementsByTag("img")
-        Log.d("jiaBing", "imgTag: ${imgTag}")
         imgTag.forEach {
             //以//开头的是加载动画图片地址，需要的话可以加上https:
             val imgUrl = it.attr("src")
             if (imgUrl.contains("http") || imgUrl.contains("https")) {
-                resultList.add(ItemResult(url = imgUrl, type = Type.Img))
+                getRealImgUrl(imgUrl)?.let {
+                    resultList.add(ItemResult(url = it, type = Type.Img))
+                }
+
             }
         }
+
         // 直接查找video标签
         val videoTag = document.getElementsByTag("video")
-        Log.d("jiaBing", "videoTag: ${videoTag}")
         if (videoTag == null) {
             parseHtmlCallback.onResult(ResultBean(list = resultList))
             return
         }
         val videoUrl = videoTag.attr("src")
-        Log.d("jiaBing", "videoUrl: ${videoUrl}")
         //替换视频播放地址
         val noWaterVideoUrl = videoUrl.replace("playwm", "play")
-        Log.d("jiaBing", "noWaterVideoUrl: ${noWaterVideoUrl}")
         // 获取重定向的URL
-        val finalVideoUrl = getRealUrl(noWaterVideoUrl)
-        Log.d("jiaBing", "finalVideoUrl: ${finalVideoUrl}")
+        val finalVideoUrl = getRealVideoUrl(noWaterVideoUrl)
         if (finalVideoUrl != null) {
+            //还有封面链接
             resultList.add(ItemResult(url = finalVideoUrl, type = Type.Video))
         }
         parseHtmlCallback.onResult(ResultBean(list = resultList))
     }
 }
+
 
 interface ParseHtmlCallback {
     fun onResult(data: ResultBean)
